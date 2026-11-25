@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chess Openings</title>
+  <style>
+    body { font: 16px system-ui, sans-serif; max-width: 1000px; margin: 2rem auto; padding: 0 1rem; }
+    input, button { font: inherit; padding: .5rem; margin: .25rem; }
+    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+    th, td { border-bottom: 1px solid #ddd; padding: .6rem; text-align: left; }
+    th { background: #f3f3f3; }
+    .moves { font-family: monospace; }
+    #status { color: #555; }
+  </style>
+</head>
+<body>
+  <h1>Chess Openings</h1>
+
+  <label>
+    Search:
+    <input id="search" type="search" placeholder="Search code, name, or moves">
+  </label>
+
+  <p>
+    <input id="csvFile" type="file" accept=".csv,text/csv">
+    <button id="exportButton">Export CSV</button>
+  </p>
+
+  <h2>Add an opening</h2>
+  <form id="addForm">
+    <input id="eco" placeholder="ECO (e.g. C20)" required>
+    <input id="name" placeholder="Opening name" required>
+    <input id="moves" placeholder="Moves (optional)">
+    <button type="submit">Add</button>
+  </form>
+
+  <p id="status"></p>
+  <table>
+    <thead>
+      <tr><th>ECO</th><th>Name</th><th>Moves</th></tr>
+    </thead>
+    <tbody id="openings"></tbody>
+  </table>
+
+  <script>
+    const STORAGE_KEY = "chess-openings";
+
+    const examples = [
+      { eco: "A00", name: "Polish Opening", moves: "1. b4" },
+      { eco: "B00", name: "King's Pawn Opening", moves: "1. e4" },
+      { eco: "C20", name: "King's Pawn Game", moves: "1. e4 e5" },
+      { eco: "C50", name: "Italian Game", moves: "1. e4 e5 2. Nf3 Nc6 3. Bc4" },
+      { eco: "C60", name: "Ruy Lopez", moves: "1. e4 e5 2. Nf3 Nc6 3. Bb5" },
+      { eco: "D06", name: "Queen's Gambit", moves: "1. d4 d5 2. c4" },
+      { eco: "E20", name: "Nimzo-Indian Defense", moves: "1. d4 Nf6 2. c4 e6 3. Nc3 Bb4" }
+    ];
+
+    let openings = loadOpenings();
+
+    function loadOpenings() {
+      try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        return saved ? JSON.parse(saved) : examples;
+      } catch {
+        return examples;
+      }
+    }
+
+    function saveOpenings() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(openings));
+    }
+
+    function render() {
+      const query = document.getElementById("search").value.trim().toLowerCase();
+      const filtered = openings
+        .filter(o => `${o.eco} ${o.name} ${o.moves}`.toLowerCase().includes(query))
+        .sort((a, b) => a.eco.localeCompare(b.eco) || a.name.localeCompare(b.name));
+
+      const tbody = document.getElementById("openings");
+      tbody.replaceChildren();
+
+      for (const opening of filtered) {
+        const row = document.createElement("tr");
+        for (const value of [opening.eco, opening.name, opening.moves]) {
+          const cell = document.createElement("td");
+          cell.textContent = value || "";
+          if (value === opening.moves) cell.className = "moves";
+          row.appendChild(cell);
+        }
+        tbody.appendChild(row);
+      }
+
+      document.getElementById("status").textContent =
+        `Showing ${filtered.length} of ${openings.length} openings.`;
+    }
+
+    // Parses CSV, including quoted fields and commas inside quotes.
+    function parseCSV(text) {
+      const rows = [];
+      let row = [], field = "", quoted = false;
+
+      for (let i = 0; i < text.length; i++) {
+        const c = text[i];
+
+        if (quoted) {
+          if (c === '"' && text[i + 1] === '"') {
+            field += '"';
+            i++;
+          } else if (c === '"') {
+            quoted = false;
+          } else {
+            field += c;
+          }
+        } else if (c === '"') {
+          quoted = true;
+        } else if (c === ",") {
+          row.push(field);
+          field = "";
+        } else if (c === "\n") {
+          row.push(field);
+          rows.push(row);
+          row = [];
+          field = "";
+        } else if (c !== "\r") {
+          field += c;
+        }
+      }
+
+      if (field || row.length) {
+        row.push(field);
+        rows.push(row);
+      }
+      return rows;
+    }
+
+    document.getElementById("search").addEventListener("input", render);
+
+    document.getElementById("addForm").addEventListener("submit", event => {
+      event.preventDefault();
+
+      openings.push({
+        eco: document.getElementById("eco").value.trim(),
+        name: document.getElementById("name").value.trim(),
+        moves: document.getElementById("moves").value.trim()
+      });
+
+      saveOpenings();
+      event.target.reset();
+      render();
+    });
+
+    document.getElementById("csvFile").addEventListener("change", async event => {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      try {
+        const rows = parseCSV(await file.text());
+        const headers = rows.shift().map(h => h.trim().toLowerCase());
+        const ecoIndex = headers.indexOf("eco");
+        const nameIndex = headers.indexOf("name");
+        const movesIndex = headers.indexOf("moves");
+
+        if (ecoIndex < 0 || nameIndex < 0) {
+          throw new Error("CSV needs at least ECO and Name columns.");
+        }
+
+        const imported = rows
+          .filter(row => row[nameIndex]?.trim())
+          .map(row => ({
+            eco: (row[ecoIndex] || "").trim(),
+            name: row[nameIndex].trim(),
+            moves: movesIndex >= 0 ? (row[movesIndex] || "").trim() : ""
+          }));
+
+        // Merge imported entries, avoiding exact ECO/name duplicates.
+        for (const item of imported) {
+          const exists = openings.some(o =>
+            o.eco.toLowerCase() === item.eco.toLowerCase() &&
+            o.name.toLowerCase() === item.name.toLowerCase()
+          );
+          if (!exists) openings.push(item);
+        }
+
+        saveOpenings();
+        render();
+        document.getElementById("status").textContent =
+          `Imported ${imported.length} rows. Total openings: ${openings.length}.`;
+      } catch (error) {
+        alert(`Could not import CSV: ${error.message}`);
+      }
+
+      event.target.value = "";
+    });
+
+    document.getElementById("exportButton").addEventListener("click", () => {
+      const quote = value => `"${String(value || "").replaceAll('"', '""')}"`;
+      const csv = [
+        ["ECO", "Name", "Moves"],
+        ...openings.map(o => [o.eco, o.name, o.moves])
+      ].map(row => row.map(quote).join(",")).join("\n");
+
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+      link.download = "chess-openings.csv";
+      link.click();
+      URL.revokeObjectURL(link.href);
+    });
+
+    render();
+  </script>
+</body>
+</html>
